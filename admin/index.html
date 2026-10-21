@@ -81,7 +81,12 @@ async function api(action,body){
   if(!window.CBS_API||/YOUR-PROJECT/.test(CBS_API))throw new Error('Edit config.js first: put your Supabase function address in it.');
   const r=await fetch(CBS_API,{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':KEY},body:JSON.stringify({action,...body})});
   const j=await r.json().catch(()=>({error:'Unexpected reply from the server'}));
-  if(!r.ok)throw new Error(j.error||('Error '+r.status));
+  if(!r.ok){
+    const e=j.error||('Error '+r.status);
+    // Clearer message when the deployed function has no handler for this action
+    if(/unknown action/i.test(e))throw new Error('Server does not recognise "'+action+'". The deployed function ('+CBS_API.split('/').pop()+') needs a handler for it - redeploy the function.');
+    throw new Error(e);
+  }
   return j;
 }
 function showMessage(title,lines,link,sub){$('rt').textContent=title;$('rsub').textContent=sub||'The staff key is shown only once. Copy it now.';$('txt').value=lines.join('\n');const q=$('qr');q.textContent='';const ok=link&&window.QRCode;q.classList.toggle('hide',!ok);$('qrnote').classList.toggle('hide',!ok);if(ok)new QRCode(q,{text:link,width:150,height:150});$('res').classList.remove('hide');$('res').scrollIntoView({behavior:'smooth'})}
