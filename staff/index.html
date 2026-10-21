@@ -1198,19 +1198,7 @@ function renderTillStockAlerts(){
   if(alertList)alertList.innerHTML=low.map(p=>`<span style="margin-right:10px">${esc(p.name)} (${totalStock(p.id)} left, reorder at ${p.reorderLevel})</span>`).join('');
 }
 
-function openCashDrawer(){
-  const cfg=DB.get('cfg');
-  if(cfg.printerMode==='serial'&&cfg.drawerKickEnabled){
-    // Send ESC/POS kick pulse via serial printer
-    Printer.openDrawer?.().then(ok=>{if(ok)toast('Cash drawer opened','🗂️','t-g');}).catch(()=>{});
-    return;
-  }
-  // Software fallback — WebUSB/BT printers handle this automatically after a receipt.
-  // Show a visual confirmation.
-  showModal(`<div class="modal-t">🗂️ Open Cash Drawer</div>
-    <p style="font-size:0.82rem;color:var(--text2);margin-bottom:14px">To open the cash drawer via a serial receipt printer, enable it in <strong>Settings → Printer & Drawer</strong> and make sure the printer is connected.<br><br>If your drawer is connected directly to a receipt printer, it will open automatically when a receipt is printed.</p>
-    <div class="btn-row"><button class="btn btn-g" style="flex:1" onclick="closeModal()">Got it</button></div>`);
-}
+function openCashDrawer(){Printer.kickDrawer();}
 
 let cameraStream=null;
 function openCameraScanner(){
@@ -1671,7 +1659,7 @@ function completeCharge(){
   window._splitCash=null;window._splitCard=null;window._giftRef=null;window._giftAmt=null;
   toast(`Sale ${fmt(t.total)} — ${methodLabel}`,'✅','t-g');
   clearCart();renderProdGrid();renderCDCart();
-  if((S.cartPM==='cash'||S.cartPM==='split')&&DB.get('cfg').drawerKickEnabled)Printer.kickDrawer();
+  if((S.cartPM==='cash'||S.cartPM==='split')&&DB.get('cfg').drawerKickEnabled&&DB.get('cfg').printerMode==='serial')Printer.kickDrawer();
   openReceiptPrompt(tx);
 }
 
@@ -2000,9 +1988,29 @@ const Printer={
     await this.writer.write(enc.encode(str));
     return true;
   },
+  // Browser Print mode: the Windows driver opens the drawer on every print job
+  // (Printer properties -> Device Settings -> Cashbox Action), so a tiny
+  // blank job is enough to open it.
+  kickViaDriver(){
+    try{
+      const f=document.createElement('iframe');
+      f.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+      document.body.appendChild(f);
+      const d=f.contentWindow.document;
+      d.open();
+      d.write('<html><head><style>@page{size:72mm 10mm;margin:0}html,body{margin:0;padding:0}</style></head><body><div style="height:1mm">&nbsp;</div></body></html>');
+      d.close();
+      setTimeout(()=>{
+        try{f.contentWindow.focus();f.contentWindow.print();}
+        catch(e){toast('Drawer kick failed: '+e.message,'❌','t-r');}
+        setTimeout(()=>f.remove(),5000);
+      },200);
+      toast('Opening cash drawer…','💰','t-g');
+    }catch(e){toast('Drawer kick failed: '+e.message,'❌','t-r');}
+  },
   async kickDrawer(){
     const cfg=DB.get('cfg');
-    if(cfg.printerMode!=='serial'){toast('Opening the drawer needs a USB (Serial) printer connection — set it in Settings → Printer & Cash Drawer.','⚠️','t-o');return;}
+    if(cfg.printerMode!=='serial'){this.kickViaDriver();return;}
     if(!this.writer){const ok=await this.connect();if(!ok)return;}
     try{await this.writer.write(this.hexToBytes(cfg.drawerKickHex||'1B7000191E'));toast('Cash drawer opened','💰','t-g');}
     catch(e){toast('Drawer kick failed: '+e.message,'❌','t-r');}
@@ -2099,7 +2107,7 @@ const Printer={
     // browser mode: open a small print-formatted window
     const w=window.open('','_blank','width=360,height=600');
     if(!w){toast('Pop-up blocked — allow pop-ups to print','⚠️','t-o');return;}
-    w.document.write(`<html><head><title>Receipt</title></head><body onload="window.print()">${this.receiptHTML(tx)}</body></html>`);
+    w.document.write(`<html><head><title>Receipt</title><style>@page{size:72mm auto;margin:0}html,body{margin:0;padding:2mm}svg{max-width:100%;height:auto}</style></head><body onload="window.print()" onafterprint="window.close()">${this.receiptHTML(tx)}</body></html>`);
     w.document.close();
   },
   async testPrint(){
